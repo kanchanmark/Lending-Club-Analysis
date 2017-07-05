@@ -1,0 +1,114 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Default and Prepaid rate
+
+```{r default and prepaid rate}
+#Create dataframe for only 36 months term loans
+RateData <- LoanData[LoanData$term == 36,]
+#unique(RateData$term)
+
+#Create a new column status with 'Default' value for 'Charged Off' and 'Default' loan status, 'Prepaid' value for 'Fully Paid' loan status and term less than 36 and 'Other' value for rest of the loan status records
+RateData$status = NA
+ind = RateData$PERIOD_END_LSTAT == 'Charged Off' | RateData$PERIOD_END_LSTAT == 'Default'
+ind1 = RateData$PERIOD_END_LSTAT == 'Fully Paid' & RateData$loanAge < 36
+RateData$status[ind] = 'Default'
+RateData$status[ind1] = 'Prepaid'
+
+#unique(RateData$status)
+RateData$status[is.na(RateData$status)] <- 'Other'
+#unique(RateData$loanAge[RateData$status == 'Prepaid'])
+#unique(RateData$status[RateData$PERIOD_END_LSTAT == 'Charged Off' | RateData$PERIOD_END_LSTAT == 'Default'])
+
+#Create new dataframes for each grade
+RateDataA <- RateData[RateData$grade == 'A',]
+RateDataB <- RateData[RateData$grade == 'B',]
+RateDataC <- RateData[RateData$grade == 'C',]
+RateDataD <- RateData[RateData$grade == 'D',]
+RateDataE <- RateData[RateData$grade == 'E',]
+RateDataF_G <- RateData[RateData$grade == 'F' | RateData$grade == 'G',]
+#unique(RateDataF_G$grade)
+
+#Calculate rate for A grade loans
+listA <- data.frame(unclass(addmargins(table(RateDataA$loanAge,RateDataA$status))))
+DefaultRate <- listA$Default/listA$Sum
+listA <- data.frame(listA,DefaultRate)
+PrePaidRate <- listA$Prepaid/listA$Sum
+listA <- data.frame(listA,PrePaidRate)
+
+id <- rownames(listA)
+listA <- cbind(loanAge=id, listA)
+listA$Other <- NULL
+listA <- listA[!(listA$loanAge == 'Sum'),]
+listA
+
+#Calculate rate for B grade loans
+listB <- data.frame(unclass(addmargins(table(RateDataB$loanAge,RateDataB$status))))
+DefaultRate <- listB$Default/listB$Sum
+listB <- data.frame(listB,DefaultRate)
+PrePaidRate <- listB$Prepaid/listB$Sum
+listB <- data.frame(listB,PrePaidRate)
+
+id <- rownames(listB)
+listB <- cbind(loanAge=id, listB)
+listB$Other <- NULL
+listB <- listB[!(listB$loanAge == 'Sum'),]
+listB
+
+#Calculate rate for C grade loans
+listC <- data.frame(unclass(addmargins(table(RateDataC$loanAge,RateDataC$status))))
+DefaultRate <- listC$Default/listC$Sum
+listC <- data.frame(listC,DefaultRate)
+PrePaidRate <- listC$Prepaid/listC$Sum
+listC <- data.frame(listC,PrePaidRate)
+
+id <- rownames(listC)
+listC <- cbind(loanAge=id, listC)
+listC$Other <- NULL
+listC <- listC[!(listC$loanAge == 'Sum'),]
+listC
+
+#Calculate rate for D grade loans
+listD <- data.frame(unclass(addmargins(table(RateDataD$loanAge,RateDataD$status))))
+DefaultRate <- listD$Default/listD$Sum
+listD <- data.frame(listD,DefaultRate)
+PrePaidRate <- listD$Prepaid/listD$Sum
+listD <- data.frame(listD,PrePaidRate)
+
+id <- rownames(listD)
+listD <- cbind(loanAge=id, listD)
+listD$Other <- NULL
+listD <- listD[!(listD$loanAge == 'Sum'),]
+listD
+
+#Calculate rate for E grade loans
+listE <- data.frame(unclass(addmargins(table(RateDataE$loanAge,RateDataE$status))))
+DefaultRate <- listE$Default/listE$Sum
+listE <- data.frame(listE,DefaultRate)
+PrePaidRate <- listE$Prepaid/listE$Sum
+listE <- data.frame(listE,PrePaidRate)
+
+id <- rownames(listE)
+listE <- cbind(loanAge=id, listE)
+listE$Other <- NULL
+listE <- listE[!(listE$loanAge == 'Sum'),]
+listE
+
+#Calculate rate for F and G grade loans
+listF_G <- data.frame(unclass(addmargins(table(RateDataF_G$loanAge,RateDataF_G$status))))
+DefaultRate <- listF_G$Default/listF_G$Sum
+listF_G <- data.frame(listF_G,DefaultRate)
+PrePaidRate <- listF_G$Prepaid/listF_G$Sum
+listF_G <- data.frame(listF_G,PrePaidRate)
+
+id <- rownames(listF_G)
+listF_G <- cbind(loanAge=id, listF_G)
+listF_G$Other <- NULL
+listF_G <- listF_G[!(listF_G$loanAge == 'Sum'),]
+listF_G
+```
+
+

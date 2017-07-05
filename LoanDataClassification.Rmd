@@ -1,0 +1,559 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#read data and replace NA with mean value of the respective column, delete columns with NA mean and not to be used for building models, create a new column with mid of fico bands
+
+```{r read data and replace NA with mean value of the respective column, delete columns with NA mean and not to be used for building models, create a new column with mid of fico bands}
+#Read data
+LoanData <- read.csv("C:/Users/DELL/Downloads/UMCP/Pi Analytics/loan_data.csv")
+
+str(LoanData)
+
+#Replace NA values by mean values
+na_columns <- colnames(LoanData)[ apply(LoanData, 2, anyNA) ]
+
+for(i in 1:ncol(LoanData)){
+  LoanData[is.na(LoanData[,i]), i] <- mean(LoanData[,i], na.rm = TRUE)
+}
+
+#Delete columns with NA mean
+unique(LoanData$title)
+mean(LoanData$title)
+
+LoanData$emp_title <- NULL
+LoanData$title <- NULL
+LoanData$verification_status_joint <- NULL
+
+#Create new columns with mid of the FICO bands
+library(stringr)
+appl_fico_low <- str_split_fixed(LoanData$APPL_FICO_BAND, "-", 2)
+#appl_fico_low
+last_fico_low <- str_split_fixed(LoanData$Last_FICO_BAND, "-", 2)
+#last_fico_low
+last_fico_low[last_fico_low == "LOW"] <- 499
+last_fico_low[last_fico_low == "MISSING"] <- 499
+last_fico_low[last_fico_low == ""] <- 499
+appl_fico_low_lower <- as.numeric(appl_fico_low[,1])
+appl_fico_low_upper <- as.numeric(appl_fico_low[,2])
+last_fico_low_lower <- as.numeric(last_fico_low[,1])
+last_fico_low_upper <- as.numeric(last_fico_low[,2])
+last_fico_low_upper[is.na(last_fico_low_upper)] <- 499
+#str(last_fico_low_upper)
+change_fico_lower <- appl_fico_low_lower - last_fico_low_lower
+change_fico_upper <- appl_fico_low_upper - last_fico_low_upper
+#summary(change_fico_lower)
+FICO_change <- paste(change_fico_lower, change_fico_upper, sep="-")
+#FICO_change
+
+appl_fico <- data.frame(appl_fico_low_lower,appl_fico_low_upper)
+mean_appl_fico <- rowMeans(appl_fico)
+last_fico <- data.frame(last_fico_low_lower,last_fico_low_upper)
+mean_last_fico <- rowMeans(last_fico)
+change_fico <- data.frame(change_fico_lower,change_fico_upper)
+mean_change_fico <- rowMeans(change_fico)
+
+LoanData <- data.frame(LoanData,mean_appl_fico,mean_change_fico,mean_last_fico)
+```
+
+#Create categorical variable for good/bad loans based on status (to be used for classification)
+
+```{r create categorical variable for good and bad loans}
+Loan <- data.frame(LoanData$PERIOD_END_LSTAT,LoanData$bad)
+unique(LoanData$PERIOD_END_LSTAT)
+Loan$status = NA 
+ind1 = Loan$LoanData.PERIOD_END_LSTAT == 'Fully Paid' | Loan$LoanData.PERIOD_END_LSTAT == 'Current' | Loan$LoanData.PERIOD_END_LSTAT == 'Late (16-30 days)' | Loan$LoanData.PERIOD_END_LSTAT == 'In Grace Period' | Loan$LoanData.PERIOD_END_LSTAT == 'Late (31-120 days)' | Loan$LoanData.PERIOD_END_LSTAT == 'Issued'
+ind2 = Loan$LoanData.PERIOD_END_LSTAT == 'Charged Off' | Loan$LoanData.PERIOD_END_LSTAT == 'Default'
+
+Loan$status[ind1] = 'Good'
+Loan$status[ind2] = 'Bad'
+
+LoanData <- data.frame(LoanData,Loan$status)
+status_new <-ifelse(Loan$status=="Bad",1,0)
+```
+
+#Undersampling using unbalanced package
+
+```{r undersampling data}
+library(unbalanced)
+
+input <- LoanData[,-status_new]
+output <- LoanData$status_new
+loan <- ubUnder(X = input, Y = output, perc = 25, method = "percPos")
+loan <- cbind(loan$X, loan$Y)
+remove(input)
+remove(output)
+LoanData <- data.frame(LoanData,status_new)
+```
+
+#Sample data from undersampled dataset
+
+```{r Sample data from undersampled dataset}
+set.seed(123457)
+
+train<-sample(nrow(loan),0.7*nrow(loan))
+data_train<-loan[train,]
+data_val<-loan[-train,]
+```
+
+#Logistic Regression
+```{r logistic regression}
+fit <- glm(status_new~InterestRate+MonthlyIncome+I(InterestRate*MonthlyIncome)+HomeOwnership+RevolvingLineUtilization+EmploymentLength+mean_appl_fico+funded_amnt+verification_status,data=data_train,family="binomial")
+summary(fit)
+
+predict_validate <- predict(fit,newdata=data_val,type="response")
+actual_validate <- data_val$status_new
+Metrics <- c("AE","RMSE","MAE","SSE","MSE")
+x1 <- mean(actual_validate - predict_validate)
+x2 <- sqrt(mean((actual_validate - predict_validate)^2))
+x3 <- mean(abs(actual_validate - predict_validate))
+x4 <- sum(actual_validate - predict_validate)^2
+x5 <- mean((actual_validate - predict_validate)^2)
+Values <- c(x1,x2,x3,x4,x5)
+x <- data.frame(Metrics,Values)
+x
+```
+
+#Accuracy, sensitivity, specificity, false omission rate v/s cutoff plots (plot to check best cut-off value)
+
+```{r Accuracy, sensitivity, specificity, false omission rate v/s cutoff plots (plot to check best cut-off value)}
+#Accuracy v/s cutoff plot
+#install.packages("ROCR")
+library(ROCR)
+pred_val <- prediction( predict_validate, actual_validate )
+perf_val <- performance( pred_val, "tpr", "fpr" )
+perf_val <- performance( pred_val, "acc")
+plot( perf_val , show.spread.at=seq(0, 1, by=0.1), col="black")
+
+ind = which.max( slot(perf_val, "y.values")[[1]] )
+ind
+acc = slot(perf_val, "y.values")[[1]][ind]
+cutoff = slot(perf_val, "x.values")[[1]][ind]
+print(c(accuracy= acc, cutoff = cutoff))
+
+
+#Sensitivity v/s cutoff plot
+pred_val <- prediction( predict_validate, actual_validate )
+perf_val <- performance( pred_val, "tpr", "fpr" )
+perf_val <- performance( pred_val, "sens")
+cut <- ifelse(slot(perf_val, "x.values")[[1]] > 0,slot(perf_val, "x.values")[[1]],0)
+plot(cut,slot(perf_val, "y.values")[[1]],xlab="Cutoff",ylab="Sensitivity")
+
+ind = which.max( slot(perf_val, "y.values")[[1]] )
+ind
+sens = slot(perf_val, "y.values")[[1]][ind]
+cutoff = cut[ind]
+print(c(sensitivity= sens, cutoff = cutoff))
+
+
+#specificity v/s cutoff plot
+pred_val <- prediction( predict_validate, actual_validate )
+perf_val <- performance( pred_val, "tpr", "fpr" )
+perf_val <- performance( pred_val, "spec")
+cut <- ifelse(slot(perf_val, "x.values")[[1]] > 0,slot(perf_val, "x.values")[[1]],0)
+plot(cut,slot(perf_val, "y.values")[[1]],xlab="Cutoff",ylab="Specificity")
+
+ind = which.min( slot(perf_val, "y.values")[[1]] )
+ind
+spec = slot(perf_val, "y.values")[[1]][ind]
+cutoff = cut[ind]
+print(c(specificity= spec, cutoff = cutoff))
+
+#False emission rate
+cutoff <- seq(0, 1, length = 1000)
+for_error <- numeric(1000)
+table <- data.frame(Cutoff = cutoff, FOR = for_error)
+for (i in 1:1000) {
+  table$FOR[i] <- sum(predict_validate < cutoff[i] & actual_validate == 1)/sum(predict_validate < cutoff[i])
+}
+plot(cutoff ~ FOR, data = table, type = "o",xlab="cutoff",ylab="False Omission rate",col="black",lty=2)
+
+ind = which.min( table$FOR )
+ind
+for_result = table$FOR[ind]
+cutoff = cutoff[ind]
+print(c(False_Omission_Rate= for_result, cutoff = cutoff))
+```
+
+#ROC curve
+
+```{r ROC curve}
+cutoff <- seq(0, 1, length = 1000)
+fpr <- numeric(1000)
+tpr <- numeric(1000)
+
+## We'll collect it in a data frame.  (We could also just keep it in three vectors)
+roc.table <- data.frame(Cutoff = cutoff, FPR = fpr,TPR = tpr)
+
+## TPR is the Sensitivity; FPR is 1-Specificity
+for (i in 1:1000) {
+  roc.table$FPR[i] <- sum(predict_validate > cutoff[i] & actual_validate == 0)/sum(actual_validate == 0)
+  roc.table$TPR[i] <- sum(predict_validate > cutoff[i] & actual_validate == 1)/sum(actual_validate == 1)
+}
+
+plot(TPR ~ FPR, data = roc.table, type = "o",xlab="1 - Specificity",ylab="Sensitivity",col="blue",lty=2)
+abline(a = 0, b = 1, lty = 2,col="red")
+
+######(ROC using performance)
+library(caret)
+pred = prediction(predict_validate,actual_validate)
+roc = performance(pred,"tpr","fpr")
+plot(roc)
+```
+
+#Lift/Gains charts
+
+```{r lift/gains chart}
+df1V <- data.frame(predict_validate,actual_validate)
+df1VS <- df1V[order(-predict_validate),]
+df1VS$Gains <- cumsum(df1VS$actual_validate)
+plot(df1VS$Gains,type="n",main="Validation Data Gains Chart",xlab="Number of Cases",ylab="Cumulative Success")
+```
+
+#Classification matrix and performance measures for chosen cutoff
+
+```{r classification matrix and performance measures for chosen cutoff}
+Predict_validation <- ifelse(predict_validate > 0.07,1,0)
+out_sample_confusion_matrix <- table(actual_validate,Predict_validation)
+out_sample_confusion_matrix
+
+accuracy <- sum(actual_validate == Predict_validation)/nrow(data_val)
+accuracy
+
+sensitivity <- sum(Predict_validation == 1 & actual_validate == 1)/sum(actual_validate == 1)
+sensitivity
+
+specificity <- sum(Predict_validation == 0 & actual_validate == 0)/sum(actual_validate == 0)
+specificity
+
+FOR <- sum(Predict_validation == 0 & actual_validate == 1)/sum(Predict_validation == 0)
+FOR
+```
+
+#Calculate net return rate [((1-Probability)*InterestRate) - Probability] and find top 15 good loans to aim for and their mean Interest Rate
+
+```{r Calculate net return rate [((1-Probability)*InterestRate) - Probability] and find top 15 good loans to aim for and their mean Interest Rate}
+#Calculate return [((1-Probability)*InterestRate) - Probability]
+val <- data.frame(data_val, predict_validate)
+val <- data.frame(val, Predict_validation)
+results <- data.frame(val$InterestRate,val$MonthlyIncome,val$HomeOwnership,val$RevolvingLineUtilization,val$EmploymentLength,val$mean_appl_fico,val$funded_amnt,val$verification_status,val$status_new,val$Predict_validation,val$predict_validate)
+Loans_Aim <- results[results$val.Predict_validation == 0,]
+return <- ((1 - Loans_Aim$val.predict_validate)*Loans_Aim$val.InterestRate) - Loans_Aim$val.predict_validate
+Loans_Aim <- data.frame(Loans_Aim,return)
+Loans_Aim <- Loans_Aim[order(-return),]
+Top_Loans_to_Aim <- head(Loans_Aim,15)
+#mean(Top_Loans_to_Aim[,7])
+summary(Top_Loans_to_Aim)
+```
+
+#Logistic regression on full dataset and top good loans in each grade category to aim for (with mean Interest details)
+
+```{r Logistic regression on full dataset and top good loans in each grade category to aim for (with mean Interest details)}
+#Now run logistic regression on full dataset
+fit <- glm(status_new~InterestRate+MonthlyIncome+I(InterestRate*MonthlyIncome)+HomeOwnership+RevolvingLineUtilization+EmploymentLength+mean_appl_fico+funded_amnt+verification_status,data=LoanData,family="binomial")
+summary(fit)
+
+predict_validate <- predict(fit,newdata=LoanData,type="response")
+actual_validate <- LoanData$status_new
+Metrics <- c("AE","RMSE","MAE","SSE","MSE")
+x1 <- mean(actual_validate - predict_validate)
+x2 <- sqrt(mean((actual_validate - predict_validate)^2))
+x3 <- mean(abs(actual_validate - predict_validate))
+x4 <- sum(actual_validate - predict_validate)^2
+x5 <- mean((actual_validate - predict_validate)^2)
+Values <- c(x1,x2,x3,x4,x5)
+x <- data.frame(Metrics,Values)
+x
+
+Predict_validation <- ifelse(predict_validate > 0.07,1,0)
+out_sample_confusion_matrix <- table(actual_validate,Predict_validation)
+out_sample_confusion_matrix
+
+accuracy <- sum(actual_validate == Predict_validation)/nrow(LoanData)
+accuracy
+
+sensitivity <- sum(Predict_validation == 1 & actual_validate == 1)/sum(actual_validate == 1)
+sensitivity
+
+specificity <- sum(Predict_validation == 0 & actual_validate == 0)/sum(actual_validate == 0)
+specificity
+
+FOR <- sum(Predict_validation == 0 & actual_validate == 1)/sum(Predict_validation == 0)
+FOR
+
+#Top good loans and their summary for each grade
+LoanData <- data.frame(LoanData,predict_validate)
+LoanData <- data.frame(LoanData, Predict_validation)
+return <- ((1 - LoanData$predict_validate)*LoanData$InterestRate) - LoanData$predict_validate
+LoanData <- data.frame(LoanData,return)
+LoanData <- LoanData[order(-return),]
+LoanData_good <- LoanData[LoanData$Predict_validation == 0,]
+d <- by(LoanData_good, LoanData_good["grade"], head, n=25)
+grep("^return$", colnames(LoanData_good))
+summary <- lapply(d, "[", c(15,153,172))
+summary(summary$A)
+summary(summary$B)
+summary(summary$C)
+summary(summary$D)
+summary(summary$E)
+summary(summary$F)
+summary(summary$G)
+```
+
+
+#KNN
+
+```{r KNN}
+#KNN
+LoanDataNew <- data.frame(loan$status_new,loan$InterestRate,loan$MonthlyIncome,loan$HomeOwnership,loan$RevolvingLineUtilization,loan$EmploymentLength,loan$mean_appl_fico,loan$funded_amnt,loan$verification_status)
+library(dummies)
+str(LoanDataNew)
+LoanDataknn <- dummy.data.frame(LoanDataNew, names = c("loan.HomeOwnership","loan.EmploymentLength","loan.verification_status") ,sep = ".")
+LoanDataknn$LoanData.Loan.status <- NULL
+fun <- function(x){ 
+  a <- mean(x) 
+  b <- sd(x) 
+  (x - a)/(b) 
+} 
+LoanDataknn[,2:9] <- apply(LoanDataknn[,2:9], 2, fun)
+
+set.seed(123457)
+train<-sample(nrow(LoanDataknn),0.7*nrow(LoanDataknn))
+data.train<-LoanDataknn[train,]
+data.val<-LoanDataknn[-train,]
+
+#install.packages("caret")
+library(caret)
+library(class)
+train_input <- as.matrix(data.train[,-1])
+train_output <- as.vector(data.train[,1])
+validate_input <- as.matrix(data.val[,-1])
+
+kmax <- 15
+ER1 <- rep(0,kmax)
+ER2 <- rep(0,kmax)
+for (i in 1:kmax){
+  prediction <- knn(train_input, train_input,train_output, k=i)
+  prediction2 <- knn(train_input, validate_input,train_output, k=i)
+  # The confusion matrix for training data is:
+  CM1 <- table(prediction, data.train$status_new)
+  # The training error rate is:
+  ER1[i] <- (CM1[1,2]+CM1[2,1])/sum(CM1)
+  ER1[i]
+  # The confusion matrix for validation data is: 
+  CM2 <- table(prediction2, data.val$status_new)
+  ER2[i] <- (CM2[1,2]+CM2[2,1])/sum(CM2)
+  ER2[i]
+}
+
+ER1
+ER2
+
+plot(c(1,kmax),c(0,0.32),type="n", xlab="k",ylab="Error Rate")
+lines(ER1,col="red")
+lines(ER2,col="blue")
+legend(9, 0.1, c("Training","Validation"),lty=c(1,1), col=c("red","blue"))
+z <- which.min(ER2)
+cat("Minimum Validation Error k:", z)
+
+# Scoring at optimal k
+prediction <- knn(train_input, train_input,train_output, k=z)
+prediction2 <- knn(train_input, validate_input,train_output, k=z)
+#prediction2
+
+CM1 <- table(prediction, data.train$status_new,dnn=list('predicted','actual'))
+CM2 <- table(prediction2, data.val$status_new,dnn=list('predicted','actual'))
+#CM1
+CM2
+#ER2 <- (CM2[1,2]+CM2[2,1])/sum(CM2)
+#ER2
+ERClass0 <- (CM2[2,1]/(CM2[1,1]+CM2[2,1]))
+ERClass1 <- (CM2[1,2]/(CM2[2,2]+CM2[1,2]))
+ERClass0
+ERClass1
+Accuracy <- (CM2[1,1] + CM2[2,2])/(nrow(data.val))
+Accuracy
+```
+
+#Naive Bayes
+
+```{r Naive Bayes}
+LoanDataNew <- data.frame(loan$status_new,loan$InterestRate,loan$MonthlyIncome,loan$HomeOwnership,loan$RevolvingLineUtilization,loan$EmploymentLength,loan$mean_appl_fico,loan$funded_amnt,loan$verification_status)
+str(LoanDataNew)
+LoanDataNew$loan.status_new <- as.factor(LoanDataNew$loan.status_new)
+
+library("caret")
+set.seed(123457)
+intrain<-sample(nrow(LoanDataNew),0.7*nrow(LoanDataNew))
+dftrain<-LoanDataNew[intrain,]
+dfvalidation<-LoanDataNew[-intrain,]
+
+#install.packages("e1071")
+library(e1071)
+# Can handle both categorical and numeric input, 
+# but output must be categorical
+model <- naiveBayes(loan.status_new~., data=dftrain)
+model
+prediction <- predict(model, newdata = dfvalidation[,-1])
+CM_NaiveBayes <- table(dfvalidation$loan.status_new,prediction,dnn=list('actual','predicted'))
+CM_NaiveBayes
+Accuracy <- (CM_NaiveBayes[1,1] + CM_NaiveBayes[2,2])/(nrow(dfvalidation))
+Accuracy
+model$apriori
+
+# For class probabilities
+predicted.probability <- predict(model, newdata = dfvalidation[,-1], type="raw")
+#predicted.probability
+# The first column is class 0, the second is class 1
+PL <- as.numeric(dfvalidation$loan.status_new)-1
+prob <- predicted.probability[,2]
+df1 <- data.frame(prediction, PL, prob)
+#Lift chart
+df1S <- df1[order(-prob),]
+df1S$Gains <- cumsum(df1S$PL)
+plot(df1S$Gains,type="n",main="Lift Chart",xlab="Number of Cases",ylab="Cumulative Success")
+lines(df1S$Gains,col="blue")
+abline(0,sum(df1S$PL)/nrow(df1S),lty = 2, col="red")
+```
+
+#Classification tree
+
+```{r classification tree}
+#install.packages("tree")
+library("caret")
+library(tree)
+str(LoanDataNew)
+tree.LoanData = tree(loan.status_new~.,dftrain)
+summary(tree.LoanData)
+plot(tree.LoanData)
+text(tree.LoanData,pretty = 0)
+tree.LoanData
+pred.full.LoanData = predict(tree.LoanData,dfvalidation,type="class") 
+classification_matrix_full <- table(pred.full.LoanData,dfvalidation$loan.status_new)
+classification_matrix_full
+accuracy.full <- (classification_matrix_full[1,1] + classification_matrix_full[2,2]) / sum(classification_matrix_full)
+accuracy.full
+
+#Find out deviance using cross-validation and prune the tree
+set.seed(123457)
+cv.LoanData = cv.tree(tree.LoanData,FUN = prune.misclass, K = 10)
+names(cv.LoanData)
+cv.LoanData
+
+par(mfrow = c(1,2))
+plot(cv.LoanData$size,cv.LoanData$dev,type = "b")
+plot(cv.LoanData$k,cv.LoanData$dev,type = "b")
+
+prune.LoanData = prune.misclass(tree.LoanData,best=3)
+plot(prune.LoanData)
+text(prune.LoanData,pretty=0)
+
+pred.LoanData.prune <- predict(prune.LoanData,dfvalidation,type="class") 
+classification_matrix_prune <- table(pred.LoanData.prune,dfvalidation$loan.status_new)
+classification_matrix_prune
+accuracy.prune <- (classification_matrix_prune[1,1] + classification_matrix_prune[2,2]) / sum(classification_matrix_prune)
+accuracy.prune
+#################################################################################################
+```
+
+#Bagging
+
+```{r bagging}
+#install.packages("randomForest")
+library(randomForest)
+# We first do bagging (which is just RF with m = p)
+set.seed(123457)
+bag.LoanData=randomForest(loan.status_new~.,data=dftrain,mtry=9,importance=TRUE)
+bag.LoanData
+yhat.bag = predict(bag.LoanData,newdata=dfvalidation)
+yhat.bag
+plot(yhat.bag, dfvalidation$LoanData.status_new)
+abline(0,1)
+yhat.test=dfvalidation$LoanData.status_new
+yhat.test
+(c = table(yhat.test,yhat.bag))
+(acc = (c[1,1]+c[2,2])/sum(c))
+importance(bag.LoanData)
+varImpPlot(bag.LoanData)
+```
+
+#Random forest 
+
+```{r random forest}
+set.seed(123457)
+rf.LoanData=randomForest(loan.status_new~.,data=dftrain,mtry=2,importance=TRUE)
+rf.LoanData
+yhat.rf = predict(rf.LoanData,newdata=dfvalidation)
+yhat.rf
+yhat.test = dfvalidation$LoanData.status_new
+yhat.test
+(c = table(yhat.test,yhat.rf))
+(acc = (c[1,1]+c[2,2])/sum(c))
+importance(rf.LoanData)
+varImpPlot(rf.LoanData)
+```
+
+#Boosting
+
+```{r boosting}
+#install.packages("gbm")
+library(gbm)
+set.seed(123457)
+boost.LoanData=gbm(loan.status_new~.,data=dftrain,distribution="gaussian",n.trees=5000,interaction.depth=4)
+summary(boost.LoanData)
+yhat.boost=predict(boost.LoanData,newdata=dfvalidation,n.trees=5000)
+yhat.boost
+yhat.test=dfvalidation$LoanData.status_new
+yhat.test
+(c = table(yhat.test,yhat.boost))
+(acc = (c[1,1]+c[2,2])/sum(c))
+```
+
+#Kmeans
+
+```{r kmeans}
+set.seed(123457)
+library(dummies)
+str(LoanDataNew)
+LoanDatakmeans <- dummy.data.frame(LoanDataNew, names = c("loan.HomeOwnership","loan.EmploymentLength","loan.verification_status") ,sep = ".")
+LoanDatakmeans$loan.status_new <- NULL
+LoanDataScale <- scale(LoanDatakmeans)
+km.out <- kmeans(LoanDataScale,2,nstart=20)
+km.out
+km.out$centers
+dist(km.out$centers)
+cluster <- km.out$cluster
+cluster
+
+LoanDataCluster <- data.frame(LoanDataNew,km.out$cluster)
+
+table(LoanDataCluster$loan.status_new,km.out$cluster)
+aggregate(LoanDataCluster[, 2], list(LoanDataCluster$km.out.cluster), mean)
+aggregate(LoanDataCluster[, 7], list(LoanDataCluster$km.out.cluster), mean)
+km.out$size
+```
+
+
+#Association Rule Mining
+
+```{r association rule mining}
+#install.packages("arules")
+library(arules)
+#install.packages("arulesViz")
+library(arulesViz)
+set.seed(123457)
+LoanDataARM <- data.frame(LoanData$HomeOwnership,LoanData$EmploymentLength,LoanData$grade,LoanData$verification_status,LoanData$status_new)
+str(LoanDataARM)
+LoanDataARM$LoanData.status_new <- as.factor(LoanDataARM$LoanData.status_new)
+library(datasets)
+#data(LoanDataARM)
+rules <- apriori(LoanDataARM, parameter = list(supp=0.01, conf=0.01),appearance = list(default="lhs",rhs="LoanData.status_new=1"),control = list(verbose=F))
+inspect(rules[1:5])
+
+rulesByConf <- sort(rules, decreasing=TRUE, by="confidence")
+rulesByConf
+inspect(rulesByConf[1:5])
+```
+

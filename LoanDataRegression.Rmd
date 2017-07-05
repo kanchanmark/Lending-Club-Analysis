@@ -1,0 +1,240 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Preprocessing of data (replace NA values by mean and delete columns having NA mean and not used for building models)
+
+```{r preprocessing}
+LoanData <- read.csv("C:/Users/DELL/Downloads/UMCP/Pi Analytics/loan_data.csv")
+
+for(i in 1:ncol(LoanData)){
+  LoanData[is.na(LoanData[,i]), i] <- mean(LoanData[,i], na.rm = TRUE)
+}
+
+na_columns <- colnames(LoanData)[ apply(LoanData, 2, anyNA) ]
+
+unique(LoanData$title)
+mean(LoanData$title)
+
+LoanData$emp_title <- NULL
+LoanData$title <- NULL
+LoanData$verification_status_joint <- NULL
+
+```
+
+#Create a new column with mid of fico band (this is to be used for building models)
+
+```{r create a new column with mid of fico band to be used for building models}
+library(stringr)
+appl_fico_low <- str_split_fixed(LoanData$APPL_FICO_BAND, "-", 2)
+#appl_fico_low
+last_fico_low <- str_split_fixed(LoanData$Last_FICO_BAND, "-", 2)
+#last_fico_low
+last_fico_low[last_fico_low == "LOW"] <- 499
+last_fico_low[last_fico_low == "MISSING"] <- 499
+last_fico_low[last_fico_low == ""] <- 499
+appl_fico_low_lower <- as.numeric(appl_fico_low[,1])
+appl_fico_low_upper <- as.numeric(appl_fico_low[,2])
+last_fico_low_lower <- as.numeric(last_fico_low[,1])
+last_fico_low_upper <- as.numeric(last_fico_low[,2])
+last_fico_low_upper[is.na(last_fico_low_upper)] <- 499
+#str(last_fico_low_upper)
+change_fico_lower <- appl_fico_low_lower - last_fico_low_lower
+change_fico_upper <- appl_fico_low_upper - last_fico_low_upper
+#summary(change_fico_lower)
+FICO_change <- paste(change_fico_lower, change_fico_upper, sep="-")
+#FICO_change
+
+appl_fico <- data.frame(appl_fico_low_lower,appl_fico_low_upper)
+mean_appl_fico <- rowMeans(appl_fico)
+last_fico <- data.frame(last_fico_low_lower,last_fico_low_upper)
+mean_last_fico <- rowMeans(last_fico)
+change_fico <- data.frame(change_fico_lower,change_fico_upper)
+mean_change_fico <- rowMeans(change_fico)
+
+LoanData <- data.frame(LoanData,mean_appl_fico,mean_change_fico,mean_last_fico)
+```
+
+#Sampling the data
+
+```{r sampling}
+set.seed(123457)
+
+train<-sample(nrow(LoanData),0.7*nrow(LoanData))
+data_train<-LoanData[train,]
+data_val<-LoanData[-train,]
+```
+
+#Multiple linear regression
+
+```{r linear regression}
+fit <- lm(InterestRate~MonthlyIncome+HomeOwnership+RevolvingLineUtilization+EmploymentLength+mean_appl_fico+funded_amnt+verification_status,data=data_train)
+summary(fit)
+plot(fit)
+
+actual <- data_val$InterestRate
+predict <- predict(fit, newdata=data_val)
+
+Metrics <- c("AE","RMSE","MAE","SSE","MSE")
+x1 <- mean(actual - predict)
+x2 <- sqrt(mean((actual - predict)^2))
+x3 <- mean(abs(actual - predict))
+x4 <- sum(actual - predict)^2
+x5 <- mean((actual - predict)^2)
+Values <- c(x1,x2,x3,x4,x5)
+x <- data.frame(Metrics,Values)
+x
+```
+
+##Remove factors greater than 32 levels since trees dont run for these variables
+
+```{r remove factors that have more than 32 levels for building regression tree}
+str(LoanData)
+is.fact <- sapply(LoanData, is.factor)
+factors.df <- LoanData[, is.fact]
+lapply(factors.df, levels)
+
+LoanData$RECEIVED_D <- NULL
+LoanData$MONTH <- NULL
+LoanData$IssuedDate <- NULL
+LoanData$State <- NULL
+LoanData$EarliestCREDITLine <- NULL
+LoanData$APPL_FICO_BAND <- NULL
+LoanData$Last_FICO_BAND <- NULL
+LoanData$VINTAGE <- NULL
+LoanData$int_rate <- NULL
+LoanData$sub_grade <- NULL
+LoanData$issue_d <- NULL
+LoanData$url <- NULL
+LoanData$zip_code <- NULL
+LoanData$desc <- NULL
+LoanData$addr_state <- NULL
+LoanData$earliest_cr_line <- NULL
+LoanData$last_pymnt_d <- NULL
+LoanData$next_pymnt_d <- NULL
+LoanData$last_credit_pull_d <- NULL
+LoanData$emp_length <- NULL
+LoanData$loan_status <- NULL
+```
+
+#OR (since not running for full set of variables) create new dataframe using only selected variables
+
+```{r new dataframe for regression tree}
+LoanDataNew <- data.frame(LoanData$InterestRate,LoanData$MonthlyIncome,LoanData$HomeOwnership,LoanData$RevolvingLineUtilization,LoanData$EmploymentLength,LoanData$mean_appl_fico,LoanData$funded_amnt,LoanData$verification_status)
+```
+
+#Resample using new dataframe
+
+```{r sample from new dataframe}
+set.seed(123457)
+
+train<-sample(nrow(LoanDataNew),0.7*nrow(LoanDataNew))
+data_train<-LoanDataNew[train,]
+data_val<-LoanDataNew[-train,]
+```
+
+#Regression tree
+
+```{r regression tree}
+library(MASS)
+library(tree)
+tree.LoanData.regression = tree (LoanData.InterestRate~.,data_train)
+summary(tree.LoanData.regression)
+tree.LoanData.regression
+plot(tree.LoanData.regression)
+text(tree.LoanData.regression,pretty=0)
+```
+
+#Pruned regression tree
+
+```{r pruned regression tree}
+prune.LoanData.regression = prune.tree(tree.LoanData.regression,best=6)
+plot(prune.LoanData.regression)
+text(prune.LoanData.regression,pretty=0)
+```
+
+#Prediction using regression tree and MSE
+
+```{r Prediction using regression tree and MSE}
+pred.LoanData.prune.regression = predict(prune.LoanData.regression,data_val)
+plot(pred.LoanData.prune.regression,data_val$LoanData.InterestRate)
+abline(0,1)
+mean((pred.LoanData.prune.regression-data_val$LoanData.InterestRate)^2)
+
+table(pred.LoanData.prune.regression)
+```
+
+#Bagging
+```{r bagging}
+library(randomForest)
+set.seed(123457)
+#Bagging is just random forest with m = no. of predictors
+bag.LoanData=randomForest(LoanData.InterestRate~.,data=data_train,mtry=7,importance=TRUE)
+bag.LoanData
+yhat.bag = predict(bag.LoanData,newdata=data_val)
+yhat.bag
+plot(yhat.bag, data_val$InterestRate)
+abline(0,1)
+mean((yhat.bag-data_val$InterestRate)^2)
+yhat.test=data_val$InterestRate
+yhat.test
+importance(bag.LoanData)
+varImpPlot(bag.LoanData)
+```
+
+#Random forest
+```{r random forest}
+set.seed(123457)
+rf.LoanData=randomForest(LoanData.InterestRate~.,data=data_train,mtry=2,importance=TRUE)
+rf.LoanData
+yhat.rf = predict(rf.LoanData,newdata=data_val)
+yhat.rf
+mean((yhat.rf-data_val$InterestRate)^2)
+yhat.test = data_val$InterestRate
+yhat.test
+importance(rf.LoanData)
+varImpPlot(rf.LoanData)
+```
+
+#Boosting
+```{r boosting}
+#install.packages("gbm")
+library(gbm)
+set.seed(123457)
+boost.CreditData=gbm(InterestRate~.,data=data_train,distribution="gaussian",n.trees=5000,interaction.depth=10)
+summary(boost.LoanData)
+yhat.boost=predict(boost.LoanData,newdata=data_val,n.trees=5000)
+yhat.boost
+mean((yhat.boost-data_val$InterestRate)^2)
+yhat.test=data_val$InterestRate
+yhat.test
+```
+
+#Kmeans (exploratory analysis)
+```{r kmeans}
+set.seed(123457)
+library(dummies)
+str(LoanDataNew)
+LoanDatakmeans <- dummy.data.frame(LoanDataNew, names = c("LoanData.HomeOwnership","LoanData.EmploymentLength","LoanData.verification_status") ,sep = ".")
+LoanDataScale <- scale(LoanDatakmeans)
+km.out <- kmeans(LoanDataScale,8,nstart=20)
+km.out
+km.out$centers
+dist(km.out$centers)
+cluster <- km.out$cluster
+cluster
+
+LoanDataCluster <- data.frame(LoanDataNew,km.out$cluster)
+LoanDataCluster <- data.frame(LoanDataCluster,LoanData$PERIOD_END_LSTAT)
+LoanDataCluster <- data.frame(LoanDataCluster,LoanData$grade)
+
+table(LoanDataCluster$LoanData.PERIOD_END_LSTAT,km.out$cluster)
+table(LoanDataCluster$LoanData.grade,km.out$cluster)
+aggregate(LoanDataCluster[, 1], list(LoanDataCluster$km.out.cluster), mean)
+aggregate(LoanDataCluster[, 2], list(LoanDataCluster$km.out.cluster), mean)
+aggregate(LoanDataCluster[, 6], list(LoanDataCluster$km.out.cluster), mean)
+km.out$size
+```
+

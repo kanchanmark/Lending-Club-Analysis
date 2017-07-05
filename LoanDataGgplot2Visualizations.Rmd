@@ -1,0 +1,588 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Library and read data
+
+```{r libraray and read data}
+install.packages("ggplot2")
+install.packages("Rcpp")
+install.packages("Hmisc")
+library(ggplot2)
+LoanData <- read.csv("C:/Users/DELL/Downloads/UMCP/Pi Analytics/loan_data.csv")
+```
+
+#Frequency of loans per grade and quarter for each year
+
+```{r Frequency of loans per grade and quarter}
+Quarter <- substring(LoanData$VINTAGE, 3)
+Quarter
+LoanData <- data.frame(LoanData,Quarter)
+prop.table(table(LoanData$grade,LoanData$issue_y,LoanData$Quarter))*100
+
+addmargins(prop.table(table(LoanData$grade,LoanData$issue_y,LoanData$Quarter))*100)
+
+ggplot(data=LoanData, aes(x=grade,y=(..count..)/sum(..count..),fill=Quarter)) +
+  geom_bar(stat="count", position=position_dodge(), colour="black") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_wrap(~issue_y, nrow=5) +
+  ggtitle("Frequency of loans per grade and quarter for each year") +
+  labs(x="Grade",y="Frequency")
+```
+
+#Weighted average of Interest Rate for every issue year and grade
+
+```{r Weighted average of Interest Rate for every issue year and grade}
+avg_intrate <- data.frame(aggregate(InterestRate ~  issue_y + grade, LoanData, mean))
+avg_intrate
+
+ggplot(avg_intrate, aes(x=issue_y, y=InterestRate, fill=grade, col=grade, label = InterestRate)) + geom_point() + geom_line() +
+  #geom_label(size = 1.5, colour = "white", fontface = "bold") +
+  ggtitle("Weighted average of Interest Rate for every issue year and grade") +
+  labs(x="Issue Year",y="Interest Rate") 
+```
+  
+#Net cumulative % of charged off loans per MOB of term 60 per issue year 
+
+```{r Net cumulative % of charged off loans per MOB of term 60 per issue year}
+check <- LoanData[LoanData$term == 60, ]
+unique(check$MOB)
+
+LoanStats <- LoanData[LoanData$term == 60,]
+issueTable <- data.frame(table(LoanStats$issue_y))
+colnames(issueTable) <- c("period","count")
+vintage_ts <- data.frame(table(LoanStats$issue_y,LoanStats$PERIOD_END_LSTAT,LoanStats$MOB))
+colnames(vintage_ts) <- c("vintage","status","mob","count")
+
+list <- addmargins(table(LoanStats$MOB,LoanStats$PERIOD_END_LSTAT,LoanStats$issue_y))
+frame <- lapply(seq(dim(list)[3]), function(x) list[ , , x])
+id <- rownames(frame[[1]])
+frame[[1]] <- cbind(mob=id, frame[[1]])
+frame[[2]] <- cbind(mob=id, frame[[2]])
+frame[[3]] <- cbind(mob=id, frame[[3]])
+frame[[4]] <- cbind(mob=id, frame[[4]])
+frame[[5]] <- cbind(mob=id, frame[[5]])
+frame[[6]] <- cbind(mob=id, frame[[6]])
+frame[[7]] <- cbind(mob=id, frame[[7]])
+df_2010 <- data.frame(unlist(frame[[1]]))
+df_2010$year <- 2010
+df_2011 <- data.frame(unlist(frame[[2]]))
+df_2011$year <- 2011
+df_2012 <- data.frame(unlist(frame[[3]]))
+df_2012$year <- 2012
+df_2013 <- data.frame(unlist(frame[[4]]))
+df_2013$year <- 2013
+df_2014 <- data.frame(unlist(frame[[5]]))
+df_2014$year <- 2014
+df_2015 <- data.frame(unlist(frame[[6]]))
+df_2015$year <- 2015
+df_2016 <- data.frame(unlist(frame[[7]]))
+df_2016$year <- 2016
+df <- rbind(df_2010,df_2011,df_2012,df_2013,df_2014,df_2015,df_2016)
+df <- df[,c(1,2,10,11)]
+df <- df[!df$mob == 'Sum',]
+str(df)
+df$mob <- as.integer(as.character(df$mob))
+df$Charged.Off <- as.integer(as.character(df$Charged.Off))
+df$Sum <- as.integer(as.character(df$Sum))
+percent <- df$Charged.Off/df$Sum
+df <- data.frame(df,percent)
+#df <- df[order(df$mob),] 
+df[is.nan(df$percent),5] <- 0.0
+
+df$cum <- 0
+t_index <- unique(issueTable$period)
+v_index <- unique(df$mob)
+for (t in 1:length(t_index)) {
+  cum <- 0
+  for (v in 1:length(v_index)) {
+    cum <- cum + df[df$year==t_index[t] & df$mob==v_index[v],"percent"]
+    df[df$year==t_index[t] & df$mob==v_index[v],"cum"] <- cum
+  }
+}
+
+
+library(dplyr)
+cum_max <- df %>% group_by(year) %>%
+  summarise(mval=max(cum))
+cum_max <- data.frame(cum_max)
+colnames(cum_max) <- c("year","val")
+#cum_max[cum_max$year==2008,2]
+index <- unique(cum_max$year)
+d <- data.frame()
+for(t in 1:length(cum_max$year))
+{
+  cum_graph <- data.frame(df[(df$year == index[t]) & (df$Charged.Off != 0 | df$cum != cum_max[cum_max$year==index[t],2]),])
+  d <- rbind(d,cum_graph)
+}
+
+d$year <- as.factor(as.character(d$year))
+d <- d[d$mob <= 60,]
+
+install.packages("directlabels")
+library(directlabels)
+install.packages("ggrepel")
+library(ggrepel)
+
+ggplot(d, aes(x=mob, y=cum/100, fill=year, col=year,group = year)) + geom_line() + geom_point() +
+  geom_dl(aes(label = year), method = list(dl.trans(x = x + 0.2), "last.points", cex = 0.8)) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Net cumulative % charged off loans per MOB for each issue year") +
+  labs(x="MOB",y="Net cumulative % charged off loans") +
+  theme(panel.background=element_rect(fill="black"))
+```
+
+#Net cumulative % of charged off loans per MOB of term 36 per issue year 
+
+```{r Net cumulative % of charged off loans per MOB of term 36 per issue year}
+check <- LoanData[LoanData$term == 36, ]
+unique(check$MOB)
+
+LoanStats <- LoanData[LoanData$term == 36,]
+issueTable <- data.frame(table(LoanStats$issue_y))
+colnames(issueTable) <- c("period","count")
+vintage_ts <- data.frame(table(LoanStats$issue_y,LoanStats$PERIOD_END_LSTAT,LoanStats$MOB))
+colnames(vintage_ts) <- c("vintage","status","mob","count")
+#vintage_ts <- vintage_ts[vintage_ts$status == "Charged Off",]
+
+list <- addmargins(table(LoanStats$MOB,LoanStats$PERIOD_END_LSTAT,LoanStats$issue_y))
+frame <- lapply(seq(dim(list)[3]), function(x) list[ , , x])
+id <- rownames(frame[[1]])
+frame[[1]] <- cbind(mob=id, frame[[1]])
+frame[[2]] <- cbind(mob=id, frame[[2]])
+frame[[3]] <- cbind(mob=id, frame[[3]])
+frame[[4]] <- cbind(mob=id, frame[[4]])
+frame[[5]] <- cbind(mob=id, frame[[5]])
+frame[[6]] <- cbind(mob=id, frame[[6]])
+frame[[7]] <- cbind(mob=id, frame[[7]])
+frame[[8]] <- cbind(mob=id, frame[[8]])
+frame[[9]] <- cbind(mob=id, frame[[9]])
+frame[[10]] <- cbind(mob=id, frame[[10]])
+df_2007 <- data.frame(unlist(frame[[1]]))
+df_2007$year <- 2007
+df_2008 <- data.frame(unlist(frame[[2]]))
+df_2008$year <- 2008
+df_2009 <- data.frame(unlist(frame[[3]]))
+df_2009$year <- 2009
+df_2010 <- data.frame(unlist(frame[[4]]))
+df_2010$year <- 2010
+df_2011 <- data.frame(unlist(frame[[5]]))
+df_2011$year <- 2011
+df_2012 <- data.frame(unlist(frame[[6]]))
+df_2012$year <- 2012
+df_2013 <- data.frame(unlist(frame[[7]]))
+df_2013$year <- 2013
+df_2014 <- data.frame(unlist(frame[[8]]))
+df_2014$year <- 2014
+df_2015 <- data.frame(unlist(frame[[9]]))
+df_2015$year <- 2015
+df_2016 <- data.frame(unlist(frame[[10]]))
+df_2016$year <- 2016
+df <- rbind(df_2007,df_2008,df_2009,df_2010,df_2011,df_2012,df_2013,df_2014,df_2015,df_2016)
+df <- df[,c(1,2,10,11)]
+df <- df[!df$mob == 'Sum',]
+str(df)
+df$mob <- as.integer(as.character(df$mob))
+df$Charged.Off <- as.integer(as.character(df$Charged.Off))
+df$Sum <- as.integer(as.character(df$Sum))
+percent <- df$Charged.Off/df$Sum
+df <- data.frame(df,percent)
+#df <- df[order(df$mob),] 
+df[is.nan(df$percent),5] <- 0.0
+
+df$cum <- 0
+t_index <- unique(issueTable$period)
+v_index <- unique(df$mob)
+for (t in 1:length(t_index)) {
+  cum <- 0
+  for (v in 1:length(v_index)) {
+    cum <- cum + df[df$year==t_index[t] & df$mob==v_index[v],"percent"]
+    df[df$year==t_index[t] & df$mob==v_index[v],"cum"] <- cum
+  }
+}
+
+
+library(dplyr)
+cum_max <- df %>% group_by(year) %>%
+  summarise(mval=max(cum))
+cum_max <- data.frame(cum_max)
+colnames(cum_max) <- c("year","val")
+#cum_max[cum_max$year==2008,2]
+index <- unique(cum_max$year)
+d <- data.frame()
+for(t in 1:length(cum_max$year))
+{
+  cum_graph <- data.frame(df[(df$year == index[t]) & (df$Charged.Off != 0 | df$cum != cum_max[cum_max$year==index[t],2]),])
+  d <- rbind(d,cum_graph)
+}
+
+d$year <- as.factor(as.character(d$year))
+d <- d[d$mob <= 36,]
+
+install.packages("directlabels")
+library(directlabels)
+install.packages("ggrepel")
+library(ggrepel)
+
+ggplot(d, aes(x=mob, y=cum/100, fill=year, col=year,group = year)) + geom_line() + geom_point() +
+  geom_dl(aes(label = year), method = list(dl.trans(x = x + 0.2), "last.points", cex = 0.8)) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Net cumulative % charged off loans per MOB for each issue year") +
+  labs(x="MOB",y="Net cumulative % charged off loans") +
+  theme(panel.background=element_rect(fill="black"))
+```
+
+#Frequency of loans per term
+
+```{r Frequency of loans per term}
+prop.table(table(LoanData$term))*100
+
+ggplot(data=LoanData, aes(x=factor(term),y=(..count..)/sum(..count..))) +
+  geom_bar(stat="count", position=position_dodge(), colour="black", fill="#DD8888") +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of loans per term") +
+  labs(x="Term",y="Frequency") +
+  scale_x_discrete(limits=c(36,60))
+```
+
+#Frequency of loans per issue year
+
+```{r Frequency of loans per issue year}
+cbind(prop.table(table(LoanData$issue_y))*100)
+
+ggplot(data=LoanData, aes(x=issue_y,y=(..count..)/sum(..count..))) +
+  geom_bar(stat="count", position=position_dodge(),fill = "darkblue",colour = "black") +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of loans per issue year") +
+  labs(x="Issue year",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightblue"))
+```
+
+#Replace NA values by mean values, create loan age bins of intervals of 5 and plot Frequency of loans per loan age bins
+
+```{r Replace NA values by mean values, create loan age bins of intervals of 5 and plot Frequency of loans per loan age bins}
+na_columns <- colnames(LoanData)[ apply(LoanData, 2, anyNA) ]
+
+for(i in 1:ncol(LoanData)){
+  LoanData[is.na(LoanData[,i]), i] <- mean(LoanData[,i], na.rm = TRUE)
+}
+
+loanAge_bin
+LoanData$loanAge
+
+#LoanData$loanAge_bin <- NULL
+loanAge_bin <- cut(LoanData$loanAge, c(0,5,10,15,20,25,30,35,40,45,50,55,60,65,70))
+LoanData <- data.frame(LoanData,loanAge_bin)
+
+cbind(prop.table(table(LoanData$loanAge_bin))*100)
+
+ggplot(data=LoanData, aes(x=loanAge_bin,y=(..count..)/sum(..count..),fill=loanAge_bin)) +
+  geom_bar(stat="count", position=position_dodge()) +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of loans per loan age bins") +
+  labs(x="Loan Age bin",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightblue")) + theme(legend.position="none")
+
+summary(LoanData$loanAge)
+```
+
+#Calculate the mid of fico band and plot frequency of of mid application fico, mid last fico and mid change in fico 
+```{Calculate the mid of fico band and plot frequency of of mid application fico, mid last fico and mid change in fico}
+library(stringr)
+appl_fico_low <- str_split_fixed(LoanData$APPL_FICO_BAND, "-", 2)
+appl_fico_low
+last_fico_low <- str_split_fixed(LoanData$Last_FICO_BAND, "-", 2)
+last_fico_low
+last_fico_low[last_fico_low == "LOW"] <- 499
+last_fico_low[last_fico_low == "MISSING"] <- 499
+last_fico_low[last_fico_low == ""] <- 499
+appl_fico_low_lower <- as.numeric(appl_fico_low[,1])
+appl_fico_low_upper <- as.numeric(appl_fico_low[,2])
+last_fico_low_lower <- as.numeric(last_fico_low[,1])
+last_fico_low_upper <- as.numeric(last_fico_low[,2])
+last_fico_low_upper[is.na(last_fico_low_upper)] <- 499
+str(last_fico_low_upper)
+change_fico_lower <- appl_fico_low_lower - last_fico_low_lower
+change_fico_upper <- appl_fico_low_upper - last_fico_low_upper
+summary(change_fico_lower)
+FICO_change <- paste(change_fico_lower, change_fico_upper, sep="-")
+FICO_change
+
+appl_fico <- data.frame(appl_fico_low_lower,appl_fico_low_upper)
+mean_appl_fico <- rowMeans(appl_fico)
+last_fico <- data.frame(last_fico_low_lower,last_fico_low_upper)
+mean_last_fico <- rowMeans(last_fico)
+change_fico <- data.frame(change_fico_lower,change_fico_upper)
+mean_change_fico <- rowMeans(change_fico)
+
+LoanData <- data.frame(LoanData,mean_appl_fico,mean_last_fico,mean_change_fico)
+
+ggplot(data=LoanData, aes(x=mean_appl_fico,y=(..count..)/sum(..count..))) +
+  geom_bar(stat="count", position=position_dodge(),fill = "darkblue",colour = "black") +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of Mid of Application FICO band of loan applications") +
+  labs(x="Mid of Application FICO band",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightblue"))
+
+ggplot(data=LoanData, aes(x=mean_last_fico,y=(..count..)/sum(..count..))) +
+  geom_bar(stat="count", position=position_dodge(),fill = "darkblue",colour = "black") +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of Mid of Last FICO band of loan applications") +
+  labs(x="Mid of Last FICO band",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightblue"))
+
+ggplot(data=LoanData, aes(x=mean_change_fico,y=(..count..)/sum(..count..))) +
+  geom_bar(stat="count", position=position_dodge(),fill = "darkblue",colour = "black") +
+  #geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            #stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of Mid of change in FICO band of loan applications") +
+  labs(x="Mid of Change of FICO band",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightblue"))
+```
+
+#Create bins for DTI values in interval of 5 and plot DTI frequency
+
+```{r dti frequency plot}
+summary(LoanData$dti)
+
+LoanData$dti
+dti_bin
+#LoanData$dti_bin <- NULL
+dti_bin <- cut(LoanData$dti, c(0,5,10,15,20,25,30,35,40))
+dti_bin[is.na(dti_bin)] <- "(0,5]"
+str(dti_bin)
+LoanData <- data.frame(LoanData,dti_bin)
+
+cbind(prop.table(table(LoanData$dti_bin))*100)
+
+ggplot(data=LoanData, aes(x=dti_bin,y=(..count..)/sum(..count..),fill=dti_bin)) +
+  geom_bar(stat="count", position=position_dodge()) +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Frequency of DTI") +
+  labs(x="DTI bin",y="Frequency") +
+  theme(panel.background=element_rect(fill="lightyellow")) + theme(legend.position="none")
+```
+
+#Boxplot of funded amount every issue year
+
+```{r Boxplot of funded amount every issue year}
+ggplot(LoanData, aes(x=factor(issue_y), y=funded_amnt, fill=factor(issue_y))) + geom_boxplot() +
+  ggtitle("Boxplot of Funded Amount every issue year") +
+  labs(x="Issue year",y="Funded amount") + theme(legend.position="none")
+```
+
+#Mean loan amount per issue year
+
+```{r Mean loan amount per issue year}
+means <- aggregate(loan_amnt ~  issue_y, LoanData, mean)
+
+ggplot(LoanData, aes(x=factor(issue_y), y=loan_amnt,fill=factor(issue_y))) + stat_summary(fun.y="mean", geom="bar") +
+  geom_text(data = means, aes(label = loan_amnt, y = loan_amnt + 1.5)) +
+  ggtitle("Mean loan amount per year") +
+  labs(x="Issue year",y="Loan amount") + theme(legend.position="none")
+```
+
+#Default loans by grade and issue year
+
+```{r Default loans by grade and issue year}
+unique(LoanData$PERIOD_END_LSTAT)
+
+ggplot(LoanData[LoanData$PERIOD_END_LSTAT=='Default',], aes(x=factor(term),y=(..count..)/sum(..count..),fill=grade)) +
+  geom_bar(position="dodge",stat="count") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_wrap(~issue_y, nrow=3) +
+    ggtitle("Default loans by grade and issue year") +
+    labs(x="Term",y="Default % loans") 
+```
+
+#Charged Off loans by grade and issue year
+
+```{r Charged Off loans by grade and issue year}
+ggplot(LoanData[LoanData$PERIOD_END_LSTAT=='Charged Off',], aes(x=factor(term),y=(..count..)/sum(..count..),fill=grade)) +
+  geom_bar(position="dodge",stat="count") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_wrap(~issue_y, nrow = 4) +
+  ggtitle("Charged Off loans by grade and issue year") +
+  labs(x="Term",y="Charged Off % loans") 
+```
+
+#Mean interest rate per term
+
+```{r Mean interest rate per term}
+means <- aggregate(InterestRate ~  term, LoanData, mean)
+
+ggplot(LoanData, aes(x=factor(term), y=InterestRate, fill=factor(term))) + geom_boxplot() +
+  scale_x_discrete(limits=c(36,60)) +
+  stat_summary(fun.y=mean, colour="darkred", geom="point", 
+               shape=18, size=3,show.legend = FALSE) + 
+  geom_text(data = means, aes(label = InterestRate, y = InterestRate + 0.04)) +
+  ggtitle("Mean interest rate per term") +
+  labs(x="Term",y="Interest Rate") + scale_fill_discrete(name = "Term")
+```
+
+#Loans per State
+
+```{r Loans per State}
+ggplot(LoanData,aes(x = State, y = (..count..)/sum(..count..))) +
+  geom_bar(width=0.7, fill="steelblue") +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = -.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Loan ID's per State") +
+  labs(x="State",y="Percent") + 
+  theme(panel.background=element_rect(fill="lightblue"))
+```
+
+#Scatter plot between Revolving Line Utilization and Revolving Credit balance filled by the loan grade
+
+```{r Scatter plot between Revolving Line Utilization and Revolving Credit balance filled by the loan grade}
+ggplot(LoanData, aes(x=RevolvingLineUtilization, y=RevolvingCREDITBalance, col = grade)) + 
+  geom_point(size = 4, alpha = 0.2) +
+  geom_smooth(method = lm) 
+```
+
+#Pie chart of loan counts per grade
+
+```{r Pie chart of loan counts per grade}
+ggplot(LoanData, aes(x=factor(1),fill = grade)) + geom_bar(width = 1) + coord_polar(theta = "y") +
+  ggtitle("Count of loans for each grade") +
+  labs(x="Count",y="") 
+```
+
+#Open Credit lines for each grade
+
+```{r Open Credit lines for each grade}
+ggplot(LoanData,aes(x = OpenCREDITLines, y = (..count..)/sum(..count..))) +
+  geom_bar(width=0.7, fill="red") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_grid(.~grade) +
+  ggtitle("Open Credit lines for each grade") +
+  labs(x="Open Credit Lines",y="Percent") + 
+  theme(panel.background=element_rect(fill="lightblue"))
+```
+
+#Loan status for each year
+
+```{r Loan status for each year}
+install.packages("stringr")
+library(stringr)
+year <- as.numeric(str_extract(LoanData$MONTH, "[0-9]+"))
+year
+LoanData <- data.frame(LoanData, year)
+
+
+ggplot(LoanData,aes(x = year, y = (..count..)/sum(..count..), fill = PERIOD_END_LSTAT,color = PERIOD_END_LSTAT)) +
+  geom_freqpoly() +
+  geom_text(aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            stat= "count", vjust = +.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ggtitle("Loan status") +
+  labs(x="Year",y="Percent") + 
+  #theme(panel.background=element_rect(fill="grey")) +
+  scale_color_discrete(name = "Status")
+```
+
+#Line Chart for Interest Rate through years
+
+```{r Line Chart for Interest Rate through years}
+ggplot(LoanData, aes(x=year, y = InterestRate, group=grade, colour=grade)) +
+  geom_line(aes(linetype=grade), size=1) +    
+  scale_colour_hue(name="Grade",l=30)  +                  
+  scale_linetype_discrete(name="Grade") +
+  xlab("Year") + ylab("Interest Rate") +
+  ggtitle("Line Chart for Interest Rate through year") +     
+  theme_bw()
+```
+
+#Histogram of loan Age alongwith mean
+
+```{r Histogram of loan Age alongwith mean}
+mean_loanAge <- mean(LoanData$loanAge, na.rm=T)
+mean_loanAge <- data.frame(mean_loanAge)
+
+mean_loanAge
+
+ggplot(LoanData, aes(x=loanAge)) + 
+  geom_histogram(aes(y=..count..),binwidth=.5,colour="black", fill="white") +
+  geom_density(alpha=.2, fill="#FF6666") +
+  geom_vline(aes(xintercept=mean(loanAge, na.rm=T)),color="red", linetype="dashed", size=1) +
+  ggtitle("Loan Age distribution with mean") +
+  labs(x="Loan Age",y="Count") + 
+  theme(panel.background=element_rect(fill="lightblue")) +
+  annotate("text", x = 15, y = 70000, label = "Mean = 15.11452")
+```
+
+#Application FICO distribution per grade
+
+```{r Application FICO distribution per grade}
+ggplot(LoanData,aes(x = mean_appl_fico, y = (..count..)/sum(..count..))) +
+  geom_bar(width=0.7, fill="black") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_grid(grade~.) +
+  ggtitle("Application FICO distribution per grade") +
+  labs(x="Mid of Application FICO band",y="Percent") + 
+  theme(panel.background=element_rect(fill="lightgreen"))
+```
+
+#Last FICO distribution per grade
+
+```{r Last FICO distribution per grade}
+ggplot(LoanData,aes(x = mean_last_fico, y = (..count..)/sum(..count..))) +
+  geom_bar(width=0.7, fill="black") +
+  scale_y_continuous(labels=scales::percent) +
+  facet_grid(grade~.) +
+  ggtitle("Last FICO distribution per grade") +
+  labs(x="Mid of Last FICO band",y="Percent") + 
+  theme(panel.background=element_rect(fill="lightgreen"))
+```
+
+#Interest Rate V/S Employment Length filled by Home Ownership
+
+```{r Interest Rate V/S Employment Length filled by Home Ownership}
+ggplot(data=LoanData, aes(x=EmploymentLength, y=InterestRate, fill=HomeOwnership)) +
+  geom_bar(stat="identity", position=position_dodge(), colour="black")
+```
+
+#Interest Rate v/s Monthly Income filled by grade
+
+```{r Interest Rate v/s Monthly Income filled by grade}
+ggplot(LoanData, aes(x=InterestRate, y=MonthlyIncome, col = grade)) + 
+  geom_point(size = 4, alpha = 0.2) +
+  geom_smooth(method = lm) 
+```
+
+#Correlation plot between few numerical variables
+
+```{r Correlation plot between few numerical variables}
+install.packages("GGally")
+library(GGally)
+LoanData$PublicRec <- as.numeric(LoanData$PublicRec)
+ggcorr(LoanData[, c(15,20,22,23,24,25,26,27,28,29,30,50,51)], hjust = 0.75, size = 4, color = "grey50",label = TRUE)
+```
+
+#DTI distribution plot
+
+```{r DTI distribution plot}
+mean(LoanData$dti)
+
+ggplot(LoanData, aes(x=dti)) +
+  geom_histogram(binwidth=.5, colour="black", fill="white") + xlim(0,75) +
+  geom_vline(aes(xintercept=mean(dti, na.rm=T)),color="red", linetype="dashed", size=1) +
+  annotate("text", x = 18, y = 27500, label = "Mean = 18.25914")
+```
+
